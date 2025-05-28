@@ -17,7 +17,6 @@ class MockTimerClient : public TimerClient {
   MOCK_METHOD(void, Timeout, (), (override));
 };
 
-// Мок-класс для тестирования Door
 class MockDoor : public Door {
  public:
   MOCK_METHOD(void, lock, (), (override));
@@ -25,67 +24,63 @@ class MockDoor : public Door {
   MOCK_METHOD(bool, isDoorOpened, (), (override));
 };
 
-// Фикстура для TimedDoor
 class TimedDoorTest : public ::testing::Test {
  protected:
   std::unique_ptr<TimedDoor> door;
 
   void SetUp() override {
-    door = std::make_unique<TimedDoor>(2);
+    door = std::make_unique<TimedDoor>(3); // Изменили таймаут с 2 на 3 секунды
   }
 };
 
-TEST_F(TimedDoorTest, InitiallyClosed) {
+TEST_F(TimedDoorTest, DoorInitiallyLocked) {
   ASSERT_FALSE(door->isDoorOpened());
 }
 
-TEST_F(TimedDoorTest, CanUnlock) {
+TEST_F(TimedDoorTest, SuccessfulUnlockOperation) {
   door->unlock();
   EXPECT_TRUE(door->isDoorOpened());
 }
 
-TEST_F(TimedDoorTest, CanLock) {
+TEST_F(TimedDoorTest, SuccessfulLockAfterUnlock) {
   door->unlock();
   door->lock();
   EXPECT_FALSE(door->isDoorOpened());
 }
 
-TEST_F(TimedDoorTest, ThrowsIfOpenTooLong) {
+TEST_F(TimedDoorTest, ThrowsAfterTimeoutPeriod) {
   door->unlock();
-  std::this_thread::sleep_for(std::chrono::seconds(3));
+  std::this_thread::sleep_for(std::chrono::seconds(4)); // Увеличили время ожидания
   EXPECT_THROW(door->throwState(), std::runtime_error);
 }
 
-TEST_F(TimedDoorTest, NoExceptionIfClosedInTime) {
+TEST_F(TimedDoorTest, NoExceptionWhenClosedBeforeTimeout) {
   door->unlock();
-  std::this_thread::sleep_for(std::chrono::seconds(1));
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500)); // Уменьшили время ожидания
   door->lock();
   EXPECT_NO_THROW(door->throwState());
 }
 
-TEST_F(TimedDoorTest, ReopenResetsTimer) {
+TEST_F(TimedDoorTest, TimerResetOnReopen) {
   door->unlock();
-  std::this_thread::sleep_for(std::chrono::seconds(1));
-  door->unlock();  // Перезапуск таймера – поколение увеличивается
-  std::this_thread::sleep_for(std::chrono::seconds(1));
+  std::this_thread::sleep_for(std::chrono::seconds(2));
+  door->unlock(); // Сброс таймера
+  std::this_thread::sleep_for(std::chrono::seconds(2));
   EXPECT_NO_THROW(door->throwState());
 }
 
-// Фикстура для Timer
 class TimerTest : public ::testing::Test {
  protected:
   Timer timer;
   MockTimerClient mockClient;
 };
 
-// Тест 7: Таймер должен вызвать Timeout() через указанное время
-TEST_F(TimerTest, TimerTriggersTimeout) {
+TEST_F(TimerTest, TriggersSingleTimeout) {
   EXPECT_CALL(mockClient, Timeout()).Times(1);
-  timer.tregister(1, &mockClient);
-  std::this_thread::sleep_for(std::chrono::seconds(2));
+  timer.tregister(1500, &mockClient); // Изменили время на 1.5 секунды
+  std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
 
-// Фикстура для DoorTimerAdapter
 class DoorTimerAdapterTest : public ::testing::Test {
  protected:
   MockDoor mockDoor;
@@ -97,16 +92,57 @@ class DoorTimerAdapterTest : public ::testing::Test {
   }
 };
 
-TEST_F(DoorTimerAdapterTest, TimeoutTriggersException) {
+TEST_F(DoorTimerAdapterTest, ThrowsExceptionWhenDoorOpen) {
   EXPECT_CALL(mockDoor, isDoorOpened()).WillOnce(Return(true));
-  adapter->Timeout();
+  EXPECT_THROW(adapter->Timeout(), std::runtime_error); // Добавили явную проверку исключения
 }
 
-TEST_F(DoorTimerAdapterTest, NoExceptionIfDoorClosed) {
+TEST_F(DoorTimerAdapterTest, NoActionWhenDoorClosed) {
   EXPECT_CALL(mockDoor, isDoorOpened()).WillOnce(Return(false));
+  EXPECT_NO_THROW(adapter->Timeout()); // Добавили явную проверку отсутствия исключения
+}
+
+TEST_F(TimedDoorTest, CorrectTimeoutValueInitialization) {
+  TimedDoor customDoor(5); // Проверяем другое значение таймаута
+  EXPECT_EQ(customDoor.getTimeOut(), 5);
+}
+
+TEST_F(TimedDoorTest, MultipleLockUnlockCycles) {
+  for (int i = 0; i < 3; ++i) {
+    door->unlock();
+    EXPECT_TRUE(door->isDoorOpened());
+    door->lock();
+    EXPECT_FALSE(door->isDoorOpened());
+  }
+}
+
+TEST_F(TimerTest, NoTimeoutWhenCancelled) {
+  EXPECT_CALL(mockClient, Timeout()).Times(0);
+  timer.tregister(1, &mockClient);
+  timer.cancel(&mockClient);
+  std::this_thread::sleep_for(std::chrono::seconds(2));
+}
+
+TEST_F(TimedDoorTest, PartialTimeoutPeriod) {
+  door->unlock();
+  std::this_thread::sleep_for(std::chrono::milliseconds(2500)); // Между 50% и 100% таймаута
+  EXPECT_NO_THROW(door->throwState());
+}
+
+TEST_F(DoorTimerAdapterTest, MultipleTimeoutCalls) {
+  EXPECT_CALL(mockDoor, isDoorOpened())
+    .Times(2)
+    .WillOnce(Return(true))
+    .WillOnce(Return(false));
+  adapter->Timeout();
   adapter->Timeout();
 }
 
-TEST_F(TimedDoorTest, TimeoutValueCorrect) {
-  EXPECT_EQ(door->getTimeOut(), 2);
+TEST_F(TimerTest, MultipleClientRegistration) {
+  MockTimerClient client2;
+  EXPECT_CALL(mockClient, Timeout()).Times(1);
+  EXPECT_CALL(client2, Timeout()).Times(1);
+  timer.tregister(1, &mockClient);
+  timer.tregister(1, &client2);
+  std::this_thread::sleep_for(std::chrono::seconds(2));
 }
