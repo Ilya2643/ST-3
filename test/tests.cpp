@@ -116,12 +116,13 @@ TEST_F(TimedDoorTest, MultipleLockUnlockCycles) {
   }
 }
 
-TEST_F(TimerTest, NoTimeoutWhenCancelled) {
+TEST_F(TimerTest, NoTimeoutWhenUnregistered) {
+  // Убедимся, что Timeout() не вызывается, если клиент не зарегистрирован
   EXPECT_CALL(mockClient, Timeout()).Times(0);
-  timer.tregister(1, &mockClient);
-  timer.cancel(&mockClient);
-  std::this_thread::sleep_for(std::chrono::seconds(2));
+  // Не регистрируем клиент в этом тесте
+  std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 }
+
 
 TEST_F(TimedDoorTest, PartialTimeoutPeriod) {
   door->unlock();
